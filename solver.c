@@ -19,10 +19,12 @@ bool*     var_pref_val;  // Variable prefered first assignation value
 unsigned* var_pn_fs;     // Variable +/- frequencies
 unsigned* srtd_var_idxs; // Sorted variable indices
 
-long unsigned ps, ucs, cls, cfs, clvl; // Number of propagation loop iterations,
-                                       // unit clause propagations, conflicts
-                                       // and cumulative level (for mean level
-                                       // of solution/conflict)
+long unsigned ps, ucs, cls, cfs, clvl, pvs, slvs; // Number of propagation loop
+                                                  // iterations, unit clause
+                                                  // propagations, conflicts,
+                                                  // cumulative level (for mean
+                                                  // level of solution/conflict)
+                                                  // and pure variables
 
 
 /*
@@ -130,6 +132,8 @@ int solve(unsigned lvl, unsigned var_idx) {
         printf("[*] Max DEPTH reached\n");
         exit(EXIT_FAILURE);
     }
+
+    slvs++;
     
     bool up_state = unit_prop(lvl);
     if (var_idx>0 && up_state==F) { // Conflict
@@ -173,8 +177,10 @@ void apply_heuristic(void) {
 
     for (unsigned i=0; i<(2*V); i+=2) { 
         unsigned f = var_pn_fs[i] + var_pn_fs[i+1]; // Calculate total var freq
-        if (var_pn_fs[i]==0 || var_pn_fs[i+1]==0)   
+        if (var_pn_fs[i]==0 || var_pn_fs[i+1]==0) {
             f = UINT_MAX; // Set max freq to pure variables 
+            pvs++;
+        }
         var_tf[i/2] = f; 
         var_tf_idxs[i/2] = i/2;  
     }
@@ -185,6 +191,8 @@ void apply_heuristic(void) {
         srtd_var_idxs[var_tf_idxs[i]] = i;
     for (unsigned i=0; i<V; i++) // Get prefered assignation value
         var_pref_val[srtd_var_idxs[i]] = (var_pn_fs[2*i] >= var_pn_fs[2*i+1]) ? T:F;
+    for (unsigned i=0; i<pvs; i++) // Assign pure variables
+        vars[i] = var_pref_val[i];
 
     for (unsigned i=0; i<L; i++) { // Replace literals in clauses
         int lit = clss[i];
@@ -222,8 +230,8 @@ int main(int argc, char* argv[]) {
     free(var_pn_fs);
 
     int lvl = solve(0, 0);
-    printf("[*] Stats: cfs=%lu cls=%lu ps=%lu ucs=%lu lvl=%d lvl_cf=%.2f cls_p=%.2f\n", 
-           cfs, cls, ps, ucs, lvl, (double)clvl/cfs, (double)cls/ps);
+    printf("[*] Stats: slvs=%lu cfs=%lu cls=%lu ps=%lu ucs=%lu lvl=%d pvs=%lu lvl_cf=%.2f\n",
+            slvs, cfs, cls, ps, ucs, lvl, pvs, (double)clvl/cfs);
     printf("%s\n", (lvl >= 0) ? "SAT":"UNSAT");
 
     if (lvl >= 0) { // Solution found
