@@ -4,27 +4,34 @@
 
 #include "quicksort.h"
 #include "cnf.h"
+#include "stack.h"
 
 /* T/F=true/false, X=undefined/unassigned */
-typedef enum {T=1, F=-1, X=0} bool; // Custom boolean typedef
+//typedef enum {T=1, F=-1, X=0} bool; // Custom boolean typedef
 
 unsigned V, C, L;     // Number of (V)ariables, (C)lauses and (L)iterals
 unsigned DEPTH;       // Depth of vars structure
 unsigned VERBOSE_LVL;
+bool F_HEURISTIC;
 
-unsigned* cls_idxs;	     // Clauses indexs
-int*      clss; 	     // Clauses
-bool*     vars;		     // Variables
-bool*     var_pref_val;  // Variable prefered first assignation value
+unsigned* cls_idxs;	     // Clause indexs
+int*      clss; 	     // Clause literals
+unsigned* var_clss_idxs; // Variable indexs
+int*      var_clss;      // Clauses per variable
+bool*     vars;		     // Variable states
+bool*     var_pref_val;  // Variable prefered first assignation values
 unsigned* var_pn_fs;     // Variable +/- frequencies
 unsigned* srtd_var_idxs; // Sorted variable indices
+bool*     clss_sat;	     // Clause satisfability states
+stack_t prop_vars;       // Variables to be propagated
 
-long unsigned ps, ucs, cls, cfs, clvl, pvs, slvs; // Number of propagation loop
-                                                  // iterations, unit clause
-                                                  // propagations, conflicts,
-                                                  // cumulative level (for mean
-                                                  // level of solution/conflict)
-                                                  // and pure variables
+long unsigned ps, ucs, cls, cfs, clvl, pvs, slvs; // Number of propagation
+                                                  // loop iterations, unit
+                                                  // clause propagations,
+                                                  // conflicts, cumulative
+                                                  // level (for mean level of
+                                                  // solution/conflict) and
+                                                  // pure variables
 
 
 /*
@@ -50,25 +57,48 @@ bool test(unsigned lvl) {
 
 
 /*
- * Desc: Performs unit propagation by searching for clauses in `clss` that only
- * have one literal unassigned (also called unit clauses)
- * Return: F if contradiction was found, T if all clauses are satisfied and X
- * when no further propagation can be done
+ * 
  */
-bool unit_prop(unsigned lvl) {
-    bool propagate = T;
-    bool all_sat;
+bool all_sat(unsigned lvl) {
+    for (unsigned i=0; i<C; i++)
+        if (clss_sat[lvl*C+i] == F)
+            return F;
+    return T;
+}
 
-    while (propagate == T) { // repeat until no more propagation can be done
-        ps++;
-        propagate = F;
-        all_sat = T;
+/*
+ * Desc: Performs unit propagation by searching for clauses in `clss` that only
+ * have one literal unassigned (known as unit clauses)
+ * Return: F if contradiction was found and X when no further propagation can
+ * be done
+ */
+bool unit_prop(unsigned lvl, unsigned dec_var_idx) {
+    stk_empty(&prop_vars);
+    stk_push(&prop_vars, dec_var_idx);
 
-        for (unsigned i=0; i<C; i++) { // For each clause
+    int v;
+    while ((v=stk_pop(&prop_vars)) != -1) {
+        unsigned start_cls = (v == 0) ? 0:var_clss_idxs[v-1];
+        unsigned end_cls = (v == 0) ? C:var_clss_idxs[v];
+
+        for (unsigned c=start_cls; c<end_cls; c++) { // For each clause
+            int cls_idx = var_clss[c];
+            unsigned i = (v==0) ? c:(unsigned)(abs(cls_idx)-1);
             bool cls_sat = F;
+
+            if (clss_sat[lvl*C+i] == T) // Skip if clause is already SAT
+                continue; 
+            
+            if (v != 0) {
+                assert(vars[lvl*V+v-1] != X);
+                if ((vars[lvl*V+v-1]==T) == (cls_idx>0)) { // Skip if v SATs it
+                    clss_sat[lvl*C+i] = T;
+                    continue;
+                }
+            }
+
             int unass_lit = 0;
             unsigned n_ass_vars = 0;
-            cls++;
 
             unsigned start_idx = cls_idxs[i];
             unsigned end_idx = cls_idxs[i+1];
@@ -80,18 +110,20 @@ bool unit_prop(unsigned lvl) {
 
                 if (var != X) { // Already propagated variable
                     n_ass_vars++;
-                    cls_sat = ((var==T) == (lit>0));
-                    if (cls_sat == T) // Check if lit is T
-                        break; // Skip if T
+                    cls_sat = ((var==T) == (lit>0)); // Check if lit is T
+                    if (cls_sat == T) { // Skip if T
+                        clss_sat[lvl*C+i] = T;
+                        break; 
+                    }
                 } else // Remember last unassigned lit
                     unass_lit = lit; 
             }
 
+            cls++;
+
             if (cls_sat == T) // Go to next clause if current one is satisfied
                 continue;     
             
-            all_sat = X;
-
             if (n_ass_vars == clss_size) // Conflict if all variables that form
                 return F;                // the clause are assigned and the
                                          // clause itself is not satisfied
@@ -100,13 +132,15 @@ bool unit_prop(unsigned lvl) {
                 unsigned var_idx = abs(unass_lit)-1;
                 bool val = (unass_lit > 0) ? T:F; // Set var to T/F
                 vars[lvl*V+var_idx] = val;
-                propagate = T;
+
+                stk_push(&prop_vars, var_idx+1);
+                clss_sat[lvl*C+i] = T;
                 ucs++;
             }
         }
+        ps++;
     }
-
-    return all_sat;
+    return X;
 }
 
 
@@ -135,14 +169,14 @@ int solve(unsigned lvl, unsigned var_idx) {
 
     slvs++;
     
-    bool up_state = unit_prop(lvl);
-    if (var_idx>0 && up_state==F) { // Conflict
+    bool up_state = unit_prop(lvl, var_idx);
+    if (up_state==F) { // Conflict
         cfs++;
         clvl += lvl;
         return F;
     }
 
-    if (up_state == T)
+    if (all_sat(lvl) == T)
         return lvl;
 
     var_idx = pick_var(lvl, var_idx);
@@ -152,8 +186,9 @@ int solve(unsigned lvl, unsigned var_idx) {
     if (VERBOSE_LVL == lvl)
         printf("Variable %d selected\n", var_idx);
 
-    // Copy vars[lvl]->vars[lvl+1] and assign selected var to preferred value
+    // Copy vars and clss_sat and assign selected var to preferred value
     memcpy(vars+(lvl+1)*V, vars+lvl*V, sizeof(bool)*V);
+    memcpy(clss_sat+(lvl+1)*C, clss_sat+lvl*C, sizeof(bool)*C);
     vars[(lvl+1)*V+var_idx-1] = var_pref_val[var_idx-1];
     int s = solve(lvl+1, var_idx);
     if (s != F)
@@ -161,44 +196,9 @@ int solve(unsigned lvl, unsigned var_idx) {
 
     // Try again with negation of preferred value
     memcpy(vars+(lvl+1)*V, vars+lvl*V, sizeof(bool)*V);
+    memcpy(clss_sat+(lvl+1)*C, clss_sat+lvl*C, sizeof(bool)*C);
     vars[(lvl+1)*V+var_idx-1] = -1*var_pref_val[var_idx-1];
     return solve(lvl+1, var_idx);
-}
-
-
-/*
- * Desc: Reorders variables heuristically to prioritize the decision of the
- * pure/most frequent ones and calculates the most frequent variable polarity of
- * each one to also heuristically prioritize its assignation value on decision
- * Return: Nothing
- */
-void apply_heuristic(void) {
-    unsigned var_tf[V], var_tf_idxs[V];
-
-    for (unsigned i=0; i<(2*V); i+=2) { 
-        unsigned f = var_pn_fs[i] + var_pn_fs[i+1]; // Calculate total var freq
-        if (var_pn_fs[i]==0 || var_pn_fs[i+1]==0) {
-            f = UINT_MAX; // Set max freq to pure variables 
-            pvs++;
-        }
-        var_tf[i/2] = f; 
-        var_tf_idxs[i/2] = i/2;  
-    }
-
-    quicksort(var_tf, var_tf_idxs, 0, V-1);
-    
-    for (unsigned i=0; i<V; i++) // Get sorted ordering
-        srtd_var_idxs[var_tf_idxs[i]] = i;
-    for (unsigned i=0; i<V; i++) // Get prefered assignation value
-        var_pref_val[srtd_var_idxs[i]] = (var_pn_fs[2*i] >= var_pn_fs[2*i+1]) ? T:F;
-    for (unsigned i=0; i<pvs; i++) // Assign pure variables
-        vars[i] = var_pref_val[i];
-
-    for (unsigned i=0; i<L; i++) { // Replace literals in clauses
-        int lit = clss[i];
-        unsigned var_idx = abs(lit)-1;
-        clss[i] = ((-1)*(lit<0)+(lit>0))*(srtd_var_idxs[var_idx]+1);
-    }
 }
 
 
@@ -206,29 +206,39 @@ int main(int argc, char* argv[]) {
     if (argc <= 1)
         exit(EXIT_FAILURE);
 
-    read_cnf(argv[1], &cls_idxs, &clss, &var_pn_fs, &V, &C, &L);
+    if (argc > 2)
+        F_HEURISTIC = argv[2][0] == 'y' ? T:F;
+    else
+        F_HEURISTIC = F;
+
+    printf("[*] F_HEURISITC: %c\n", F_HEURISTIC==T ? 'T':'F');
+
+    read_cnf(argv[1], &cls_idxs, &clss, &vars, &var_pn_fs, &var_clss_idxs,
+             &var_clss, &srtd_var_idxs, &var_pref_val, &pvs, &V, &C, &L,
+             F_HEURISTIC);
     printf("[*] V=%u C=%u L=%u\n", V, C, L);
 
-    if (argc > 2)
-        DEPTH = strtoul(argv[2], NULL, 0);
+    if (argc > 3)
+        DEPTH = strtoul(argv[3], NULL, 0);
     else
         DEPTH = V;
     printf("[*] DEPTH: %u\n", DEPTH);
 
-    if (argc > 3)
+    if (argc > 4)
         VERBOSE_LVL = strtoul(argv[3], NULL, 0);
     else
         VERBOSE_LVL = -1;
 
+    printf("[*] Allocating %lf MiB for clss_sat\n", DEPTH*(C/1048576.0));
+    clss_sat = calloc(C*DEPTH, sizeof(bool));
+    memset(clss_sat, F, C*DEPTH);
+
     printf("[*] Allocating %lf MiB for vars\n", DEPTH*(V/1048576.0));
-    vars = calloc(V*DEPTH, sizeof(bool));
-    memset(vars, X, V*DEPTH);
+    // TODO revert allocation of vars here somehow
+    //vars = calloc(V*DEPTH, sizeof(bool));
+    //memset(vars, X, V*DEPTH);
 
-    srtd_var_idxs = calloc(V, sizeof(unsigned));
-    var_pref_val = calloc(V, sizeof(bool));
-    apply_heuristic();
-    free(var_pn_fs);
-
+    stk_init(&prop_vars, V);
     int lvl = solve(0, 0);
     printf("[*] Stats: slvs=%lu cfs=%lu cls=%lu ps=%lu ucs=%lu lvl=%d pvs=%lu lvl_cf=%.2f\n",
             slvs, cfs, cls, ps, ucs, lvl, pvs, (double)clvl/cfs);
