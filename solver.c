@@ -20,7 +20,7 @@ unsigned* var_clss_idxs; // Variable indexs
 int*      var_clss;      // Clauses per variable
 bool*     vars;		     // Variable states
 bool*     var_pref_val;  // Variable prefered first assignation values
-unsigned* var_pn_fs;     // Variable +/- frequencies
+//unsigned* var_pn_fs;     // Variable +/- frequencies
 unsigned* srtd_var_idxs; // Sorted variable indices
 bool*     clss_sat;	     // Clause satisfability states
 stack_t prop_vars;       // Variables to be propagated
@@ -209,14 +209,16 @@ int main(int argc, char* argv[]) {
     if (argc > 2)
         F_HEURISTIC = argv[2][0] == 'y' ? T:F;
     else
-        F_HEURISTIC = F;
+        F_HEURISTIC = T;
 
     printf("[*] F_HEURISITC: %c\n", F_HEURISTIC==T ? 'T':'F');
 
-    read_cnf(argv[1], &cls_idxs, &clss, &vars, &var_pn_fs, &var_clss_idxs,
-             &var_clss, &srtd_var_idxs, &var_pref_val, &pvs, &V, &C, &L,
-             F_HEURISTIC);
+    unsigned* var_pn_fs;
+    read_cnf(argv[1], &cls_idxs, &clss, &var_pn_fs, &V, &C, &L);
     printf("[*] V=%u C=%u L=%u\n", V, C, L);
+
+    unsigned* var_tf;
+    calc_var_tf(&var_tf, &var_pn_fs, V);
 
     if (argc > 3)
         DEPTH = strtoul(argv[3], NULL, 0);
@@ -234,9 +236,23 @@ int main(int argc, char* argv[]) {
     memset(clss_sat, F, C*DEPTH);
 
     printf("[*] Allocating %lf MiB for vars\n", DEPTH*(V/1048576.0));
-    // TODO revert allocation of vars here somehow
-    //vars = calloc(V*DEPTH, sizeof(bool));
-    //memset(vars, X, V*DEPTH);
+    vars = calloc(V*DEPTH, sizeof(bool));
+    memset(vars, X, V*DEPTH);
+    
+    var_pref_val = calloc(V, sizeof(bool));
+    srtd_var_idxs = calloc(V, sizeof(unsigned));
+    if (F_HEURISTIC == T) {
+        apply_heuristic(&vars, &clss, &var_pref_val, &var_pn_fs, &var_tf,
+                        &srtd_var_idxs, V, L);
+        free(var_pn_fs);
+    } else {
+        memset(var_pref_val, T, V);
+        for (unsigned i=0; i<V; i++)
+            srtd_var_idxs[i] = i;
+    }
+
+    calc_var_clss(&var_clss_idxs, &var_clss, &cls_idxs, &clss, &var_tf, V, C, L);
+    free(var_tf);
 
     stk_init(&prop_vars, V);
     int lvl = solve(0, 0);
