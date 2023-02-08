@@ -105,11 +105,17 @@ bool unit_prop(unsigned lvl, unsigned d_var_idx) {
 
         for (unsigned c=start_cls; c<end_cls; c++) { // For each clause
             unsigned cls_idx = abs(var_clss[c]);
+            bool polarity = (var_clss[c]>0) ? T:F;
             unsigned i = (v == -1) ? c:cls_idx-1;
             bool cls_sat = F;
 
             if (clss_sat[i] == T) // Skip if clause is already SAT
                 continue;
+            else if (v>0 && polarity==vars[v-1]) {
+                clss_sat[i] = T;
+                stk_push(sat_clss, cls_idx);
+                continue;
+            }
 
             if (v > 0) {
                 assert(vars[v-1] != X);
@@ -287,7 +293,7 @@ int solve(unsigned lvl, unsigned var_idx) {
 }
 
 
-void partition_solve(unsigned lvl, bool* init_vars) {
+void partition_solve(unsigned lvl) {
     unsigned k = 1<<lvl;
     
     for (unsigned i=0; i<k; i++) {
@@ -297,9 +303,6 @@ void partition_solve(unsigned lvl, bool* init_vars) {
             memset(clss_sat, F, C);
 
             vars = calloc(V, sizeof(bool));
-            if (init_vars != NULL)
-                memcpy(vars, init_vars, V);
-
             assert(vars != NULL);
 
             prop_vars = malloc(sizeof(stack_t));
@@ -364,18 +367,10 @@ int main(int argc, char* argv[]) {
     else
         VERBOSE_LVL = -1;
 
-    //printf("[*] Allocating %lf MiB for clss_sat\n", C/1048576.0);
-    //clss_sat = calloc(C, sizeof(bool));
-    //memset(clss_sat, F, C*(1<<DEPTH));
-
-    //printf("[*] Allocating %lf MiB for vars\n", V/1048576.0);
-    bool* init_vars = calloc(V, sizeof(bool));
-    //memset(init_vars, X, V);
-
     var_pref_val = calloc(V, sizeof(bool));
     srtd_var_idxs = calloc(V, sizeof(unsigned));
     if (F_HEURISTIC == T) {
-        pvs = apply_heuristic(&init_vars, &clss, &var_pref_val, &var_pn_fs, &var_tf,
+        pvs = apply_heuristic(&clss, &var_pref_val, &var_pn_fs, &var_tf,
                               &srtd_var_idxs, V, L);
         free(var_pn_fs);
     } else {
@@ -391,15 +386,10 @@ int main(int argc, char* argv[]) {
     //stk_init(ass_vars, V);
     //stk_init(sat_clss, C+V);
 
-    if (pvs == 0) {
-        free(init_vars);
-        init_vars = NULL;
-    }
-
     //solve(0, 0);
     #pragma omp parallel
     #pragma omp single
-    partition_solve(DEPTH, init_vars);
+    partition_solve(DEPTH);
 
     printf("[*] Stats: slts=%lu slvs=%lu cfs=%lu cls=%lu ps=%lu ucs=%lu pvs=%lu lvl_cf=%.2f\n",
             slts, slvs, cfs, cls, ps, ucs, pvs, (double)clvl/cfs);

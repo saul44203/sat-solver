@@ -82,7 +82,7 @@ void calc_var_tf(unsigned** var_tf, unsigned** var_pn_fs, unsigned V) {
 }
 
 
-unsigned apply_heuristic(bool** vars, int** clss, bool** var_pref_val,
+unsigned apply_heuristic(int** clss, bool** var_pref_val,
                          unsigned** var_pn_fs, unsigned** var_tf,
                          unsigned** srtd_var_idxs, unsigned V, unsigned L) {
     // Build index vector of var_tf
@@ -112,10 +112,8 @@ unsigned apply_heuristic(bool** vars, int** clss, bool** var_pref_val,
         unsigned nf = (*var_pn_fs)[2*i+1];
         bool pref_val = (pf >= nf) ? T:F;
         (*var_pref_val)[var_idx] = pref_val;
-        if (pf==0 || nf==0) {
-            (*vars)[var_idx] = pref_val;
+        if (pf==0 || nf==0)
             pvs++;
-        }
     }
 
     return pvs;
